@@ -17,6 +17,12 @@ $raw = file_get_contents('php://input');
 $headers = function_exists('getallheaders') ? getallheaders() : array();
 $remoteIp = isset($_SERVER['REMOTE_ADDR']) ? (string)$_SERVER['REMOTE_ADDR'] : '';
 
+file_put_contents(
+    '/tmp/smsviewer-webhook.log',
+    date('c') . ' IP=' . $remoteIp . ' RAW=' . $raw . PHP_EOL,
+    FILE_APPEND
+);
+
 try {
     $result = \FreePBX::Smsviewer()->handleWebhook($raw, $headers, $remoteIp);
 
@@ -31,9 +37,23 @@ try {
     http_response_code($status);
     echo json_encode($body);
 } catch (\Throwable $e) {
+    file_put_contents(
+        '/tmp/smsviewer-webhook-error.log',
+        date('c')
+        . ' MESSAGE=' . $e->getMessage()
+        . ' FILE=' . $e->getFile()
+        . ' LINE=' . $e->getLine()
+        . PHP_EOL
+        . $e->getTraceAsString()
+        . PHP_EOL . PHP_EOL,
+        FILE_APPEND
+    );
+
     http_response_code(500);
     echo json_encode(array(
         'status' => 'error',
-        'message' => 'Unhandled exception'
+        'message' => $e->getMessage(),
+        'file' => $e->getFile(),
+        'line' => $e->getLine()
     ));
 }
