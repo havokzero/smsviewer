@@ -1,0 +1,22 @@
+<module>
+    <rawname>smsviewer</rawname>
+    <name>SMS Viewer</name>
+    <version>0.1.0</version>
+    <type>setup</type>
+    <license>AGPLv3</license>
+    <licenselink>https://www.gnu.org/licenses/agpl-3.0.en.html</licenselink>
+    <category>Admin</category>
+    <description>Inbound SMS viewer and webhook ingestion for FreePBX</description>
+    <menuitems>
+        <smsviewer>
+            <category>Admin</category>
+            <name>SMS Viewer</name>
+            <link>config.php?display=smsviewer</link>
+        </smsviewer>
+    </menuitems>
+    <supported>
+        <version>15.0</version>
+        <version>16.0</version>
+        <version>17.0</version>
+    </supported>
+</module>
