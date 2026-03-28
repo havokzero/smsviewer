@@ -27,18 +27,22 @@ class Webhook
             ));
         }
 
-        if (!$this->isTokenValid($headers)) {
-            return $this->response(403, array(
-                'status' => 'error',
-                'message' => 'Invalid token',
-            ));
-        }
-
         $data = json_decode($rawBody, true);
         if (!is_array($data)) {
             return $this->response(400, array(
                 'status' => 'error',
                 'message' => 'Invalid JSON payload',
+            ));
+        }
+
+        if (
+            !$this->isTokenValid($headers) &&
+            !$this->isQueryTokenValid() &&
+            !$this->looksLikeFlowroutePayload($data)
+        ) {
+            return $this->response(403, array(
+                'status' => 'error',
+                'message' => 'Invalid token',
             ));
         }
 
@@ -74,6 +78,14 @@ class Webhook
             $normalized['provider_ref'],
             $rawBody,
             $normalized['status']
+        );
+
+        $this->sendDiscordNotification(
+            $normalized['sender'],
+            $normalized['receiver'],
+            $normalized['message'],
+            $normalized['provider_ref'],
+            'flowroute'
         );
 
         return $this->response(200, array(
@@ -127,6 +139,14 @@ class Webhook
             'received'
         );
 
+        $this->sendDiscordNotification(
+            $normalized['sender'],
+            $normalized['receiver'],
+            $normalized['message'],
+            $normalized['provider_ref'],
+            'generic'
+        );
+
         return $this->response(200, array(
             'status' => 'ok',
             'message_id' => $id,
@@ -170,9 +190,7 @@ class Webhook
             return false;
         }
 
-        return isset($attributes['delivery_receipts'])
-            || isset($attributes['status'])
-            || isset($attributes['message_callback_url']);
+        return isset($attributes['delivery_receipts']);
     }
 
     private function looksLikeLegacyStatusCallback(array $data)
@@ -339,6 +357,21 @@ class Webhook
         return false;
     }
 
+    private function isQueryTokenValid()
+    {
+        $expected = trim((string)$this->module->getWebhookToken());
+        if ($expected === '') {
+            return false;
+        }
+
+        $candidate = isset($_GET['token']) ? trim((string)$_GET['token']) : '';
+        if ($candidate === '') {
+            return false;
+        }
+
+        return hash_equals($expected, $candidate);
+    }
+
     private function isIpAllowed($remoteIp)
     {
         $allowed = $this->module->getAllowedIps();
@@ -354,6 +387,47 @@ class Webhook
         }
 
         return false;
+    }
+
+    private function sendDiscordNotification($from, $to, $message, $providerRef = null, $provider = 'sms')
+    {
+        if (!method_exists($this->module, 'getAllSettings')) {
+            return;
+        }
+
+        $settings = $this->module->getAllSettings();
+        $discordWebhook = isset($settings['discord_webhook_url']) ? trim((string)$settings['discord_webhook_url']) : '';
+
+        if ($discordWebhook === '') {
+            return;
+        }
+
+        $content = "**Inbound SMS Received**\n"
+            . "**From:** " . $from . "\n"
+            . "**To:** " . $to . "\n"
+            . "**Provider:** " . $provider . "\n";
+
+        if (!empty($providerRef)) {
+            $content .= "**Ref:** " . $providerRef . "\n";
+        }
+
+        $content .= "**Message:**\n" . $message;
+
+        $payload = json_encode(array(
+            'content' => $content,
+        ));
+
+        $ch = curl_init($discordWebhook);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/json',
+            'Content-Length: ' . strlen($payload),
+        ));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_exec($ch);
+        curl_close($ch);
     }
 
     private function response($status, array $body)
