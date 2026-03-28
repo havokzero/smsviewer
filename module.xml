@@ -1,4 +1,4 @@
-<module>
+﻿<module>
     <rawname>smsviewer</rawname>
     <name>SMS Viewer</name>
     <version>0.1.0</version>
@@ -8,11 +8,12 @@
     <category>Admin</category>
     <description>Inbound SMS viewer and webhook ingestion for FreePBX</description>
     <menuitems>
-        <smsviewer>
+        <menuitem>
             <category>Admin</category>
             <name>SMS Viewer</name>
+            <id>smsviewer</id>
             <link>config.php?display=smsviewer</link>
-        </smsviewer>
+        </menuitem>
     </menuitems>
     <supported>
         <version>15.0</version>
