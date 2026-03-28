@@ -436,26 +436,26 @@ class Smsviewer implements \BMO
     private function createTables()
     {
         $this->db->exec("
-            CREATE TABLE IF NOT EXISTS smsviewer_messages (
-                id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                sender VARCHAR(64) NOT NULL,
-                receiver VARCHAR(64) NOT NULL,
-                message TEXT NOT NULL,
-                direction ENUM('inbound','outbound') NOT NULL DEFAULT 'inbound',
-                provider_ref VARCHAR(128) DEFAULT NULL,
-                raw_payload MEDIUMTEXT DEFAULT NULL,
-                status VARCHAR(32) DEFAULT NULL,
-                provider_status VARCHAR(64) DEFAULT NULL,
-                status_updated_at DATETIME DEFAULT NULL,
-                PRIMARY KEY (id),
-                KEY idx_sender (sender),
-                KEY idx_receiver (receiver),
-                KEY idx_created_at (created_at),
-                KEY idx_provider_ref (provider_ref),
-                KEY idx_status (status)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        ");
+        CREATE TABLE IF NOT EXISTS smsviewer_messages (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sender VARCHAR(64) NOT NULL,
+            receiver VARCHAR(64) NOT NULL,
+            message TEXT NOT NULL,
+            direction ENUM('inbound','outbound') NOT NULL DEFAULT 'inbound',
+            provider_ref VARCHAR(128) DEFAULT NULL,
+            raw_payload MEDIUMTEXT DEFAULT NULL,
+            status VARCHAR(32) DEFAULT NULL,
+            provider_status VARCHAR(64) DEFAULT NULL,
+            status_updated_at DATETIME DEFAULT NULL,
+            PRIMARY KEY (id),
+            KEY idx_sender (sender),
+            KEY idx_receiver (receiver),
+            KEY idx_created_at (created_at),
+            KEY idx_provider_ref (provider_ref),
+            KEY idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 
         $this->db->exec("
             CREATE TABLE IF NOT EXISTS smsviewer_settings (
