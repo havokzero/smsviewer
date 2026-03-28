@@ -85,6 +85,11 @@ class Smsviewer implements \BMO
                 $this->saveSettings($_POST);
                 break;
 
+            case 'push_flowroute_callbacks':
+                $this->saveSettings($_POST);
+                $this->pushFlowrouteCallbacks();
+                break;
+
             case 'purge_old':
                 $this->purgeOldMessages();
                 break;
@@ -112,6 +117,7 @@ class Smsviewer implements \BMO
             'settings'     => $this->getAllSettings(),
             'webhookUrl'   => $this->guessWebhookUrl(),
             'filters'      => $filters,
+            'notice'       => $this->getNotice(),
         );
 
         if ($tab === 'settings') {
@@ -329,6 +335,13 @@ class Smsviewer implements \BMO
         $allowedIps = isset($post['allowed_ips']) ? trim((string)$post['allowed_ips']) : '';
         $token = isset($post['webhook_token']) ? trim((string)$post['webhook_token']) : '';
 
+        $flowrouteAccessKey = isset($post['flowroute_access_key']) ? trim((string)$post['flowroute_access_key']) : '';
+        $flowrouteSecretKey = isset($post['flowroute_secret_key']) ? trim((string)$post['flowroute_secret_key']) : '';
+        $flowrouteSmsCallbackUrl = isset($post['flowroute_sms_callback_url']) ? trim((string)$post['flowroute_sms_callback_url']) : '';
+        $flowrouteMmsCallbackUrl = isset($post['flowroute_mms_callback_url']) ? trim((string)$post['flowroute_mms_callback_url']) : '';
+        $flowrouteSmsDlrCallbackUrl = isset($post['flowroute_sms_dlr_callback_url']) ? trim((string)$post['flowroute_sms_dlr_callback_url']) : '';
+        $flowrouteMmsDlrCallbackUrl = isset($post['flowroute_mms_dlr_callback_url']) ? trim((string)$post['flowroute_mms_dlr_callback_url']) : '';
+
         if ($retention < 1) {
             $retention = 365;
         }
@@ -346,6 +359,15 @@ class Smsviewer implements \BMO
         $this->setSetting('page_size', (string)$pageSize);
         $this->setSetting('allowed_ips', $allowedIps);
         $this->setSetting('webhook_token', $token);
+
+        $this->setSetting('flowroute_access_key', $flowrouteAccessKey);
+        $this->setSetting('flowroute_secret_key', $flowrouteSecretKey);
+        $this->setSetting('flowroute_sms_callback_url', $flowrouteSmsCallbackUrl);
+        $this->setSetting('flowroute_mms_callback_url', $flowrouteMmsCallbackUrl);
+        $this->setSetting('flowroute_sms_dlr_callback_url', $flowrouteSmsDlrCallbackUrl);
+        $this->setSetting('flowroute_mms_dlr_callback_url', $flowrouteMmsDlrCallbackUrl);
+
+        $this->setNotice('Settings saved.');
     }
 
     public function getAllSettings()
@@ -354,11 +376,17 @@ class Smsviewer implements \BMO
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : array();
 
         $settings = array(
-            'webhook_enabled' => '1',
-            'retention_days'  => '365',
-            'page_size'       => '100',
-            'allowed_ips'     => '',
-            'webhook_token'   => '',
+            'webhook_enabled'                 => '1',
+            'retention_days'                  => '365',
+            'page_size'                       => '100',
+            'allowed_ips'                     => '',
+            'webhook_token'                   => '',
+            'flowroute_access_key'            => '',
+            'flowroute_secret_key'            => '',
+            'flowroute_sms_callback_url'      => '',
+            'flowroute_mms_callback_url'      => '',
+            'flowroute_sms_dlr_callback_url'  => '',
+            'flowroute_mms_dlr_callback_url'  => '',
         );
 
         foreach ($rows as $row) {
@@ -421,6 +449,109 @@ class Smsviewer implements \BMO
         return $scheme . '://' . $host . '/smsviewer-hook.php';
     }
 
+    private function pushFlowrouteCallbacks()
+    {
+        $accessKey = trim((string)$this->getSetting('flowroute_access_key', ''));
+        $secretKey = trim((string)$this->getSetting('flowroute_secret_key', ''));
+
+        if ($accessKey === '' || $secretKey === '') {
+            $this->setNotice('Flowroute access key and secret key are required.', 'danger');
+            return;
+        }
+
+        $callbacks = array(
+            'sms_callback'     => trim((string)$this->getSetting('flowroute_sms_callback_url', '')),
+            'mms_callback'     => trim((string)$this->getSetting('flowroute_mms_callback_url', '')),
+            'sms_dlr_callback' => trim((string)$this->getSetting('flowroute_sms_dlr_callback_url', '')),
+            'mms_dlr_callback' => trim((string)$this->getSetting('flowroute_mms_dlr_callback_url', '')),
+        );
+
+        $results = array();
+
+        foreach ($callbacks as $callbackType => $callbackUrl) {
+            if ($callbackUrl === '') {
+                continue;
+            }
+
+            $results[] = $this->flowroutePutCallback($callbackType, $callbackUrl, $accessKey, $secretKey);
+        }
+
+        $failed = array_filter($results, function ($row) {
+            return empty($row['ok']);
+        });
+
+        if (!empty($failed)) {
+            $messages = array();
+            foreach ($failed as $row) {
+                $messages[] = $row['callback_type'] . ': ' . $row['message'];
+            }
+            $this->setNotice('Flowroute update failed: ' . implode(' | ', $messages), 'danger');
+            return;
+        }
+
+        $this->setNotice('Flowroute webhooks updated successfully.');
+    }
+
+    private function flowroutePutCallback($callbackType, $callbackUrl, $accessKey, $secretKey)
+    {
+        $url = 'https://api.flowroute.com/v2.1/messages/' . rawurlencode($callbackType);
+
+        $payload = json_encode(array(
+            'data' => array(
+                'attributes' => array(
+                    'callback_url' => $callbackUrl,
+                ),
+            ),
+        ));
+
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERPWD, $accessKey . ':' . $secretKey);
+        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/vnd.api+json',
+            'Accept: application/vnd.api+json',
+            'Content-Length: ' . strlen($payload),
+        ));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+
+        $body = curl_exec($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        if ($curlError !== '') {
+            return array(
+                'ok' => false,
+                'callback_type' => $callbackType,
+                'message' => $curlError,
+            );
+        }
+
+        if ($httpCode === 204) {
+            return array(
+                'ok' => true,
+                'callback_type' => $callbackType,
+                'message' => 'Updated',
+            );
+        }
+
+        $decoded = json_decode((string)$body, true);
+        $message = 'HTTP ' . $httpCode;
+
+        if (is_array($decoded) && !empty($decoded['errors'][0]['detail'])) {
+            $message = $decoded['errors'][0]['detail'];
+        }
+
+        return array(
+            'ok' => false,
+            'callback_type' => $callbackType,
+            'message' => $message,
+        );
+    }
+
     private function getFiltersFromRequest()
     {
         return array(
@@ -436,26 +567,26 @@ class Smsviewer implements \BMO
     private function createTables()
     {
         $this->db->exec("
-        CREATE TABLE IF NOT EXISTS smsviewer_messages (
-            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            sender VARCHAR(64) NOT NULL,
-            receiver VARCHAR(64) NOT NULL,
-            message TEXT NOT NULL,
-            direction ENUM('inbound','outbound') NOT NULL DEFAULT 'inbound',
-            provider_ref VARCHAR(128) DEFAULT NULL,
-            raw_payload MEDIUMTEXT DEFAULT NULL,
-            status VARCHAR(32) DEFAULT NULL,
-            provider_status VARCHAR(64) DEFAULT NULL,
-            status_updated_at DATETIME DEFAULT NULL,
-            PRIMARY KEY (id),
-            KEY idx_sender (sender),
-            KEY idx_receiver (receiver),
-            KEY idx_created_at (created_at),
-            KEY idx_provider_ref (provider_ref),
-            KEY idx_status (status)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ");
+            CREATE TABLE IF NOT EXISTS smsviewer_messages (
+                id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sender VARCHAR(64) NOT NULL,
+                receiver VARCHAR(64) NOT NULL,
+                message TEXT NOT NULL,
+                direction ENUM('inbound','outbound') NOT NULL DEFAULT 'inbound',
+                provider_ref VARCHAR(128) DEFAULT NULL,
+                raw_payload MEDIUMTEXT DEFAULT NULL,
+                status VARCHAR(32) DEFAULT NULL,
+                provider_status VARCHAR(64) DEFAULT NULL,
+                status_updated_at DATETIME DEFAULT NULL,
+                PRIMARY KEY (id),
+                KEY idx_sender (sender),
+                KEY idx_receiver (receiver),
+                KEY idx_created_at (created_at),
+                KEY idx_provider_ref (provider_ref),
+                KEY idx_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
 
         $this->db->exec("
             CREATE TABLE IF NOT EXISTS smsviewer_settings (
@@ -491,11 +622,17 @@ class Smsviewer implements \BMO
     private function seedDefaultSettings()
     {
         $defaults = array(
-            'webhook_enabled' => '1',
-            'retention_days'  => '365',
-            'page_size'       => '100',
-            'allowed_ips'     => '',
-            'webhook_token'   => $this->generateToken(),
+            'webhook_enabled'                 => '1',
+            'retention_days'                  => '365',
+            'page_size'                       => '100',
+            'allowed_ips'                     => '',
+            'webhook_token'                   => $this->generateToken(),
+            'flowroute_access_key'            => '',
+            'flowroute_secret_key'            => '',
+            'flowroute_sms_callback_url'      => '',
+            'flowroute_mms_callback_url'      => '',
+            'flowroute_sms_dlr_callback_url'  => '',
+            'flowroute_mms_dlr_callback_url'  => '',
         );
 
         foreach ($defaults as $key => $value) {
@@ -577,6 +714,34 @@ class Smsviewer implements \BMO
         if ($posted === '' || !hash_equals($actual, $posted)) {
             throw new Exception('Invalid CSRF token');
         }
+    }
+
+    private function setNotice($message, $type = 'success')
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            @session_start();
+        }
+
+        $_SESSION['smsviewer_notice'] = array(
+            'type'    => $type,
+            'message' => $message,
+        );
+    }
+
+    private function getNotice()
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            @session_start();
+        }
+
+        if (empty($_SESSION['smsviewer_notice'])) {
+            return null;
+        }
+
+        $notice = $_SESSION['smsviewer_notice'];
+        unset($_SESSION['smsviewer_notice']);
+
+        return $notice;
     }
 
     private function generateToken($bytes = 24)

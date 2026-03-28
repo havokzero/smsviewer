@@ -10,12 +10,19 @@ if (!defined('FREEPBX_IS_AUTH')) {
 /** @var array $messages */
 /** @var array $stats */
 /** @var array $filters */
+/** @var array|null $notice */
 ?>
 <link rel="stylesheet" href="admin/modules/smsviewer/assets/css/smsviewer.css">
 <script src="admin/modules/smsviewer/assets/js/smsviewer.js"></script>
 
 <div class="container-fluid">
     <?php echo $tabs; ?>
+
+    <?php if (!empty($notice) && !empty($notice['message'])): ?>
+        <div class="alert alert-<?php echo htmlspecialchars($notice['type'], ENT_QUOTES, 'UTF-8'); ?>">
+            <?php echo htmlspecialchars($notice['message'], ENT_QUOTES, 'UTF-8'); ?>
+        </div>
+    <?php endif; ?>
 
     <div class="row smsviewer-summary-row">
         <div class="col-sm-4">
@@ -34,7 +41,7 @@ if (!defined('FREEPBX_IS_AUTH')) {
             <div class="smsviewer-stat-card">
                 <div class="smsviewer-stat-label">Last Message</div>
                 <div class="smsviewer-stat-value small">
-                    <?php echo $stats['last_message_at'] ? htmlspecialchars($stats['last_message_at'], ENT_QUOTES, 'UTF-8') : 'N/A'; ?>
+                    <?php echo !empty($stats['last_message_at']) ? htmlspecialchars($stats['last_message_at'], ENT_QUOTES, 'UTF-8') : 'N/A'; ?>
                 </div>
             </div>
         </div>
@@ -61,12 +68,12 @@ if (!defined('FREEPBX_IS_AUTH')) {
                             $senderValue = $row['sender'];
                             $class = ($activeSender === $senderValue) ? 'list-group-item active' : 'list-group-item';
                             $url = 'config.php?display=smsviewer&tab=main&sender=' . urlencode($senderValue)
-                                . '&sender_search=' . urlencode($filters['sender_search'])
-                                . '&q=' . urlencode($filters['q'])
-                                . '&receiver=' . urlencode($filters['receiver'])
-                                . '&status=' . urlencode($filters['status'])
-                                . '&date_from=' . urlencode($filters['date_from'])
-                                . '&date_to=' . urlencode($filters['date_to']);
+                                    . '&sender_search=' . urlencode($filters['sender_search'])
+                                    . '&q=' . urlencode($filters['q'])
+                                    . '&receiver=' . urlencode($filters['receiver'])
+                                    . '&status=' . urlencode($filters['status'])
+                                    . '&date_from=' . urlencode($filters['date_from'])
+                                    . '&date_to=' . urlencode($filters['date_to']);
                             ?>
                             <a class="<?php echo $class; ?>" href="<?php echo $url; ?>">
                                 <span class="smsviewer-sender"><?php echo htmlspecialchars($senderValue, ENT_QUOTES, 'UTF-8'); ?></span>
@@ -122,7 +129,7 @@ if (!defined('FREEPBX_IS_AUTH')) {
                             <div class="col-sm-3">
                                 <select class="form-control" name="status">
                                     <option value="">Any Status</option>
-                                    <?php foreach (array('received','queued','sent','delivered','failed','undelivered') as $statusOpt): ?>
+                                    <?php foreach (array('received', 'queued', 'sent', 'delivered', 'failed', 'undelivered') as $statusOpt): ?>
                                         <option value="<?php echo $statusOpt; ?>" <?php echo ($filters['status'] === $statusOpt) ? 'selected' : ''; ?>>
                                             <?php echo ucfirst($statusOpt); ?>
                                         </option>

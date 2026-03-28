@@ -42,16 +42,75 @@ class Webhook
             ));
         }
 
-        if ($this->looksLikeStatusCallback($data)) {
-            return $this->handleStatusCallback($data, $rawBody);
+        if ($this->looksLikeFlowroutePayload($data)) {
+            if ($this->looksLikeFlowrouteDlr($data)) {
+                return $this->handleFlowrouteStatusCallback($data, $rawBody);
+            }
+
+            return $this->handleFlowrouteInboundMessage($data, $rawBody);
         }
 
-        return $this->handleInboundMessage($data, $rawBody);
+        if ($this->looksLikeLegacyStatusCallback($data)) {
+            return $this->handleLegacyStatusCallback($data, $rawBody);
+        }
+
+        return $this->handleLegacyInboundMessage($data, $rawBody);
     }
 
-    private function handleInboundMessage(array $data, $rawBody)
+    private function handleFlowrouteInboundMessage(array $data, $rawBody)
     {
-        $normalized = $this->normalizeInboundPayload($data);
+        $normalized = $this->normalizeFlowrouteInboundPayload($data);
+        if (!$normalized['ok']) {
+            return $this->response(400, array(
+                'status' => 'error',
+                'message' => $normalized['error'],
+            ));
+        }
+
+        $id = $this->module->insertInboundMessage(
+            $normalized['sender'],
+            $normalized['receiver'],
+            $normalized['message'],
+            $normalized['provider_ref'],
+            $rawBody,
+            $normalized['status']
+        );
+
+        return $this->response(200, array(
+            'status' => 'ok',
+            'message_id' => $id,
+            'provider' => 'flowroute',
+        ));
+    }
+
+    private function handleFlowrouteStatusCallback(array $data, $rawBody)
+    {
+        $normalized = $this->normalizeFlowrouteStatusPayload($data);
+        if (!$normalized['ok']) {
+            return $this->response(400, array(
+                'status' => 'error',
+                'message' => $normalized['error'],
+            ));
+        }
+
+        $updated = $this->module->updateDeliveryStatus(
+            $normalized['provider_ref'],
+            $normalized['provider_status'],
+            $rawBody
+        );
+
+        return $this->response(200, array(
+            'status' => 'ok',
+            'updated_rows' => $updated,
+            'provider_ref' => $normalized['provider_ref'],
+            'new_status' => $normalized['provider_status'],
+            'provider' => 'flowroute',
+        ));
+    }
+
+    private function handleLegacyInboundMessage(array $data, $rawBody)
+    {
+        $normalized = $this->normalizeLegacyInboundPayload($data);
         if (!$normalized['ok']) {
             return $this->response(400, array(
                 'status' => 'error',
@@ -69,15 +128,16 @@ class Webhook
         );
 
         return $this->response(200, array(
-            'status'     => 'ok',
+            'status' => 'ok',
             'message_id' => $id,
+            'provider' => 'generic',
         ));
     }
 
-    private function handleStatusCallback(array $data, $rawBody)
+    private function handleLegacyStatusCallback(array $data, $rawBody)
     {
         $providerRef = isset($data['RefId']) ? trim((string)$data['RefId']) : '';
-        $providerStatus = $this->extractStatus($data);
+        $providerStatus = $this->extractLegacyStatus($data);
 
         if ($providerRef === '' || $providerStatus === '') {
             return $this->response(400, array(
@@ -89,30 +149,111 @@ class Webhook
         $updated = $this->module->updateDeliveryStatus($providerRef, $providerStatus, $rawBody);
 
         return $this->response(200, array(
-            'status'       => 'ok',
+            'status' => 'ok',
             'updated_rows' => $updated,
             'provider_ref' => $providerRef,
-            'new_status'   => $providerStatus,
+            'new_status' => $providerStatus,
+            'provider' => 'generic',
         ));
     }
 
-    private function looksLikeStatusCallback(array $data)
+    private function looksLikeFlowroutePayload(array $data)
+    {
+        return isset($data['data']) && is_array($data['data']);
+    }
+
+    private function looksLikeFlowrouteDlr(array $data)
+    {
+        $attributes = $this->getFlowrouteAttributes($data);
+
+        if (empty($attributes)) {
+            return false;
+        }
+
+        return isset($attributes['delivery_receipts'])
+            || isset($attributes['status'])
+            || isset($attributes['message_callback_url']);
+    }
+
+    private function looksLikeLegacyStatusCallback(array $data)
     {
         return isset($data['Status']) || isset($data['MessageStatus']) || isset($data['DeliveryStatus']);
     }
 
-    private function extractStatus(array $data)
+    private function normalizeFlowrouteInboundPayload(array $data)
     {
-        foreach (array('Status', 'MessageStatus', 'DeliveryStatus') as $key) {
-            if (isset($data[$key])) {
-                return trim((string)$data[$key]);
-            }
+        $attributes = $this->getFlowrouteAttributes($data);
+        $providerRef = isset($data['data']['id']) ? trim((string)$data['data']['id']) : '';
+
+        $from = isset($attributes['from']) ? trim((string)$attributes['from']) : '';
+        $to = isset($attributes['to']) ? trim((string)$attributes['to']) : '';
+        $message = isset($attributes['body']) ? trim((string)$attributes['body']) : '';
+        $status = isset($attributes['status']) ? trim((string)$attributes['status']) : 'received';
+
+        if ($from === '') {
+            return array('ok' => false, 'error' => 'Missing Flowroute from');
         }
 
-        return '';
+        if ($to === '') {
+            return array('ok' => false, 'error' => 'Missing Flowroute to');
+        }
+
+        if ($message === '') {
+            return array('ok' => false, 'error' => 'Missing Flowroute body');
+        }
+
+        if ($providerRef === '') {
+            $providerRef = null;
+        }
+
+        return array(
+            'ok' => true,
+            'sender' => $from,
+            'receiver' => $to,
+            'message' => $message,
+            'provider_ref' => $providerRef,
+            'status' => ($status !== '' ? $status : 'received'),
+        );
     }
 
-    private function normalizeInboundPayload(array $data)
+    private function normalizeFlowrouteStatusPayload(array $data)
+    {
+        $attributes = $this->getFlowrouteAttributes($data);
+        $providerRef = isset($data['data']['id']) ? trim((string)$data['data']['id']) : '';
+        $providerStatus = '';
+
+        if (!empty($attributes['delivery_receipts']) && is_array($attributes['delivery_receipts'])) {
+            $lastReceipt = end($attributes['delivery_receipts']);
+            if (is_array($lastReceipt)) {
+                if (isset($lastReceipt['status'])) {
+                    $providerStatus = trim((string)$lastReceipt['status']);
+                } elseif (isset($lastReceipt['message_state'])) {
+                    $providerStatus = trim((string)$lastReceipt['message_state']);
+                }
+            }
+            reset($attributes['delivery_receipts']);
+        }
+
+        if ($providerStatus === '' && isset($attributes['status'])) {
+            $providerStatus = trim((string)$attributes['status']);
+        }
+
+        if ($providerRef === '') {
+            return array('ok' => false, 'error' => 'Missing Flowroute message id');
+        }
+
+        if ($providerStatus === '') {
+            return array('ok' => false, 'error' => 'Missing Flowroute status');
+        }
+
+        return array(
+            'ok' => true,
+            'provider_ref' => $providerRef,
+            'provider_status' => $providerStatus,
+        );
+    }
+
+    private function normalizeLegacyInboundPayload(array $data)
     {
         $from = isset($data['From']) ? trim((string)$data['From']) : '';
         $to = '';
@@ -140,12 +281,36 @@ class Webhook
         }
 
         return array(
-            'ok'           => true,
-            'sender'       => $from,
-            'receiver'     => $to,
-            'message'      => $message,
+            'ok' => true,
+            'sender' => $from,
+            'receiver' => $to,
+            'message' => $message,
             'provider_ref' => $providerRef,
         );
+    }
+
+    private function extractLegacyStatus(array $data)
+    {
+        foreach (array('Status', 'MessageStatus', 'DeliveryStatus') as $key) {
+            if (isset($data[$key])) {
+                return trim((string)$data[$key]);
+            }
+        }
+
+        return '';
+    }
+
+    private function getFlowrouteAttributes(array $data)
+    {
+        if (empty($data['data']) || !is_array($data['data'])) {
+            return array();
+        }
+
+        if (empty($data['data']['attributes']) || !is_array($data['data']['attributes'])) {
+            return array();
+        }
+
+        return $data['data']['attributes'];
     }
 
     private function isTokenValid(array $headers)
@@ -195,7 +360,7 @@ class Webhook
     {
         return array(
             'status' => (int)$status,
-            'body'   => $body,
+            'body' => $body,
         );
     }
 }
